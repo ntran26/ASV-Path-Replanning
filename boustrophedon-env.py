@@ -1,9 +1,6 @@
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
-import matplotlib.pyplot as plt
-import matplotlib.animation as animation
-
 # Define the dimensions of the 2D environment
 width = 50
 height = 30
