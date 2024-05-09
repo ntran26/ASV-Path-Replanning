@@ -8,11 +8,11 @@ pygame.init()
 width = 700
 height = 500
 step = 100
-speed = 0.1
 
-# # Set up the Pygame window
-# screen = pygame.display.set_mode((width*1.2, height*1.2))
-# pygame.display.set_caption('ASV Path Following Simulation')
+# # Define the ship dimensions and speed
+# ship_width = 20
+# ship_height = 40
+speed = 0.2
 
 # Define colors
 white = (255,255,255)
@@ -60,7 +60,7 @@ class ASV:
         self.x = x
         self.y = y
 
-# Scale the coverage path to fit the new screen dimensions while maintaining their relative position on the larger screen
+# Scale the coverage path to fit the new screen dimensions
 x_points = [x + x_offset for x in x_points]
 y_points = [y + y_offset for y in y_points]
 
@@ -69,6 +69,7 @@ asv = ASV(x_points[0], y_points[0])
 
 # Main loop
 while True:
+    # Condition to quit the program
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             pygame.quit()
@@ -98,6 +99,3 @@ while True:
             current_point_index += 1
 
     pygame.display.flip()  # Update the display
-
-# Quit the game
-pygame.quit()
