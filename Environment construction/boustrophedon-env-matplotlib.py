@@ -4,7 +4,7 @@ import matplotlib.animation as animation
 # Define the dimensions of the 2D environment
 width = 50
 height = 30
-step = 3
+step = 5
 speed = 0.01
 
 # Initialize the coverage points as empty lists
