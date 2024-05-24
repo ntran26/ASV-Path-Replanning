@@ -16,22 +16,20 @@ WIDTH = 300
 HEIGHT = 200
 START = (50, 50)
 STEP = 50
+UPSCALE_WIDTH = 600
+UPSCALE_HEIGHT = 400
 
 class ASVVisualization:
     def __init__(self, width, height):
         self.width = width
         self.height = height
-        # self.path = path
         pygame.init()
-        # self.screen = pygame.display.set_mode((self.width, self.height))
-        self.screen = pygame.display.set_mode((600,400))
+        self.screen = pygame.display.set_mode((UPSCALE_WIDTH, UPSCALE_HEIGHT))
         self.surface = pygame.Surface((self.width, self.height))
-        # window = pygame.Surface((600,400))
-        # window.blit(image, rect)
         self.clock = pygame.time.Clock()
 
     def draw_path(self):      
-        self.screen.fill(BLACK)  # Fill the screen     
+        self.surface.fill(BLACK)  # Fill the surface     
         self.step = STEP
 
         pts = []
@@ -40,19 +38,19 @@ class ASVVisualization:
             if step % 2 == 0:   # go top down
                 p = (START[0]+step*100,START[1])
                 pts.append(p)
-                pygame.draw.circle(self.screen, WHITE, p, 5)
+                pygame.draw.circle(self.surface, WHITE, p, 5)
                 # bottom horizontal line
                 p = (START[0]+step*100,self.height-50)
                 pts.append(p)
-                pygame.draw.circle(self.screen, WHITE, p, 5)
+                pygame.draw.circle(self.surface, WHITE, p, 5)
             else:               # go bottom up
                 p = (START[0]+step*100,self.height-50)
                 pts.append(p)
-                pygame.draw.circle(self.screen, WHITE, p, 5)
+                pygame.draw.circle(self.surface, WHITE, p, 5)
                 # top horizontal line
                 p = (START[0]+step*100,START[1])
                 pts.append(p)
-                pygame.draw.circle(self.screen, WHITE, p, 5)
+                pygame.draw.circle(self.surface, WHITE, p, 5)
         
         path = np.empty((0, 2), int)
 
@@ -74,48 +72,9 @@ class ASVVisualization:
         for y in range(p4[1], p5[1]):
             new_point = np.array([[p4[0], y]])
             path = np.append(path, new_point, axis=0)
-        # for x in range(p5[0], p6[0]):
-        #     new_point = np.array([[x, p5[1]]])
-        #     path = np.append(path, new_point, axis=0)
-        # for y in range(p7[1], p6[1]):
-        #     new_point = np.array([[p6[0], self.height-y]])
-        #     path = np.append(path, new_point, axis=0)
-        # for x in range(p7[0], p8[0]):
-        #     new_point = np.array([[x, p7[1]]])
-        #     path = np.append(path, new_point, axis=0)
-
-        # for y in range(p8[1], p9[1]):
-        #     new_point = np.array([[p8[0], y]])
-        #     path = np.append(path, new_point, axis=0)
-        # for x in range(p9[0], p10[0]):
-        #     new_point = np.array([[x, p9[1]]])
-        #     path = np.append(path, new_point, axis=0)
-        # for y in range(p11[1], p10[1]):
-        #     new_point = np.array([[p10[0], self.height-y]])
-        #     path = np.append(path, new_point, axis=0)
-        # for x in range(p11[0], p12[0]):
-        #     new_point = np.array([[x, p11[1]]])
-        #     path = np.append(path, new_point, axis=0)
-
-        # for y in range(p12[1], p13[1]):
-        #     new_point = np.array([[p12[0], y]])
-        #     path = np.append(path, new_point, axis=0)
-        # for x in range(p13[0], p14[0]):
-        #     new_point = np.array([[x, p13[1]]])
-        #     path = np.append(path, new_point, axis=0)
-        # for y in range(p15[1], p14[1]):
-        #     new_point = np.array([[p14[0], self.height-y]])
-        #     path = np.append(path, new_point, axis=0)
-        # for x in range(p15[0], p16[0]):
-        #     new_point = np.array([[x, p15[1]]])
-        #     path = np.append(path, new_point, axis=0)
-        
-        # for y in range(p16[1], p17[1]):
-        #     new_point = np.array([[p16[0], y]])
-        #     path = np.append(path, new_point, axis=0)
 
         for point in path:
-            pygame.draw.circle(self.screen, GREEN, (int(point[0]), int(point[1])), 1)
+            pygame.draw.circle(self.surface, GREEN, (int(point[0]), int(point[1])), 1)
 
         self.path = path
 
@@ -130,13 +89,12 @@ class ASVVisualization:
         while self.step < num_step:
             self.position = np.array([self.position[0] + self.speed*np.cos(np.radians(self.heading)),
                                       self.position[1] + self.speed*np.sin(np.radians(self.heading))], dtype = float)
-            # pygame.draw.circle(self.screen, BLUE, self.position, 1)
             pos = np.vstack([pos, self.position])
             self.step += 1
             self.heading += 2
 
         for point in pos:
-            pygame.draw.circle(self.screen, BLUE, (int(point[0]), int(point[1])), 1)
+            pygame.draw.circle(self.surface, BLUE, (int(point[0]), int(point[1])), 1)
 
         # Go straight
         self.heading = 90
@@ -147,12 +105,11 @@ class ASVVisualization:
         while self.step < num_step:
             self.position = np.array([self.position[0] + self.speed*np.cos(np.radians(self.heading)),
                                       self.position[1] + self.speed*np.sin(np.radians(self.heading))], dtype = float)
-            # pygame.draw.circle(self.screen, BLUE, self.position, 1)
             pos = np.vstack([pos, self.position])
             self.step += 1
 
         for point in pos:
-            pygame.draw.circle(self.screen, YELLOW, (int(point[0]), int(point[1])), 1)
+            pygame.draw.circle(self.surface, YELLOW, (int(point[0]), int(point[1])), 1)
 
         # Turn left
         self.heading = 90
@@ -165,13 +122,12 @@ class ASVVisualization:
                                         self.position[0] + self.speed*np.cos(np.radians(self.heading)),
                                         self.position[1] + self.speed*np.sin(np.radians(self.heading))
                                         ], dtype = float)
-            # pygame.draw.circle(self.screen, BLUE, self.position, 1)
             pos = np.vstack([pos, self.position])
             self.step += 1
             self.heading -= 2
         
         for point in pos:
-            pygame.draw.circle(self.screen, RED, (int(point[0]), int(point[1])), 1)
+            pygame.draw.circle(self.surface, RED, (int(point[0]), int(point[1])), 1)
 
         num_step = 60
         # Turn right
@@ -184,13 +140,12 @@ class ASVVisualization:
         while self.step < num_step:
             self.position = np.array([self.position[0] + self.speed*np.cos(np.radians(self.heading)),
                                       self.position[1] + self.speed*np.sin(np.radians(self.heading))], dtype = float)
-            # pygame.draw.circle(self.screen, BLUE, self.position, 1)
             pos = np.vstack([pos, self.position])
             self.step += 1
             self.heading += 2
 
         for point in pos:
-            pygame.draw.circle(self.screen, BLUE, (int(point[0]), int(point[1])), 1)
+            pygame.draw.circle(self.surface, BLUE, (int(point[0]), int(point[1])), 1)
 
         # Go straight
         self.heading = 0
@@ -201,12 +156,11 @@ class ASVVisualization:
         while self.step < num_step:
             self.position = np.array([self.position[0] + self.speed*np.cos(np.radians(self.heading)),
                                       self.position[1] + self.speed*np.sin(np.radians(self.heading))], dtype = float)
-            # pygame.draw.circle(self.screen, BLUE, self.position, 1)
             pos = np.vstack([pos, self.position])
             self.step += 1
 
         for point in pos:
-            pygame.draw.circle(self.screen, YELLOW, (int(point[0]), int(point[1])), 1)
+            pygame.draw.circle(self.surface, YELLOW, (int(point[0]), int(point[1])), 1)
 
         # Turn left
         self.heading = 0
@@ -219,33 +173,26 @@ class ASVVisualization:
                                         self.position[0] + self.speed*np.cos(np.radians(self.heading)),
                                         self.position[1] + self.speed*np.sin(np.radians(self.heading))
                                         ], dtype = float)
-            # pygame.draw.circle(self.screen, BLUE, self.position, 1)
             pos = np.vstack([pos, self.position])
             self.step += 1
             self.heading -= 2
         
         for point in pos:
-            pygame.draw.circle(self.screen, RED, (int(point[0]), int(point[1])), 1)
-
-        # df = pd.DataFrame(path)
-        # df.to_csv("path.csv")
+            pygame.draw.circle(self.surface, RED, (int(point[0]), int(point[1])), 1)
 
     def run_visualization(self):
         running = True
-        index = 0
         while running:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
             self.draw_path()
-
-            # # Animate the dot
-            # if index < len(self.path):
-            #     pygame.draw.circle(self.screen, BLUE, (self.path[index][0], self.path[index][1]), 5)
-            #     index += 10
+            
+            scaled_surface = pygame.transform.scale(self.surface, (UPSCALE_WIDTH, UPSCALE_HEIGHT))
+            self.screen.blit(scaled_surface, (0, 0))
 
             pygame.display.update()
-            # self.clock.tick(60)  # Limit to 60 frames per second
+            self.clock.tick(60)  # Limit to 60 frames per second
         pygame.quit()
 
 visualization = ASVVisualization(WIDTH, HEIGHT)
