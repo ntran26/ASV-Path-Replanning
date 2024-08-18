@@ -13,17 +13,16 @@ GREEN = (0, 1, 0)
 YELLOW = (1, 1, 0)
 BLUE = (0, 0, 1)
 
-# Define map dimensions and start/goal points, number of static obstacles
-WIDTH = 100
-HEIGHT = 150
-START = (50, 20)
-GOAL = (50, 120)
-NUM_STATIC_OBS = 5
+# Define map dimensions and start/goal points
+WIDTH = 20
+HEIGHT = 30
+START = (10, 5)
+GOAL = (10, 25)
 
 # Define observation radius and grid size
-RADIUS = 100
-SQUARE_SIZE = 10
-SPEED = 1
+RADIUS = 10
+SQUARE_SIZE = 2
+SPEED = 0.5
 
 # Define initial heading angle, turn rate and number of steps
 INITIAL_HEADING = 90
@@ -64,7 +63,7 @@ class ASVEnv(gym.Env):
         self.action_space = spaces.Discrete(3)
 
         # 4 possible states for observation, and the shape = number of grids inside the observation radius
-        self.observation_space = spaces.Box(low=0, high=3, shape=(313,), dtype=np.int32) 
+        self.observation_space = spaces.Box(low=0, high=3, shape=(77,), dtype=np.int32) 
         
 
         self.reset()
@@ -129,25 +128,6 @@ class ASVEnv(gym.Env):
             boundary.append({'x': map_width, 'y': y, 'state': COLLISION_STATE})     # right boundary
         return boundary
     
-    # Create a function to generate static obstacles
-    def generate_static_obstacles(self, num_obs, map_width, map_height):
-        obstacles = []
-        # Generate random obstacles around the map
-        for _ in range(num_obs):
-            x = np.random.randint(0, map_width)
-            y = np.random.randint(0, map_height)
-            obstacles.append({'x': x, 'y': y, 'state': COLLISION_STATE})
-        # Generate 2 random obstacles along the path
-        for _ in range(2):
-            x = self.start[0]
-            y = np.random.randint(self.start[1] + 20, self.goal[1] - 20)
-            obstacles.append({'x': x, 'y': y, 'state': COLLISION_STATE})
-        return obstacles
-        # x = 50
-        # y = 70
-        # obstacles.append({'x': x, 'y': y, 'state': COLLISION_STATE})
-        # return obstacles
-    
     # Function that generate a path line (list/array of points)
     def generate_path(self, start_point, goal_point):
         path = []
@@ -164,8 +144,7 @@ class ASVEnv(gym.Env):
 
     def reset(self, seed=None, options=None):
         # super().reset(seed=seed)
-        self.obstacles = self.generate_static_obstacles(3, self.width, self.height)
-        self.objects_environment = self.obstacles + self.path + self.boundary + self.goal_point
+        self.objects_environment = self.path + self.boundary + self.goal_point
         self.grid_dict = self.fill_grid(self.objects_environment, self.grid_size)
 
         self.step_count = 0
@@ -223,11 +202,6 @@ class ASVEnv(gym.Env):
         state = self.grid_dict.get((self.closest_multiple(x, self.grid_size), self.closest_multiple(y, self.grid_size)), FREE_STATE)
         distance_to_path = self.calculate_distance_to_path(self.position)
         distance_to_goal = self.calculate_distance_to_goal(self.position)
-        # Calculate the distance to the nearest obstacle
-        nearest_obstacle_distance = self.calculate_distance_to_nearest_obstacle(self.position)
-        
-        # Set a threshold distance for significant penalty
-        danger_zone_threshold = self.grid_size * 2  
         
         reward = 0
         if state == COLLISION_STATE:
@@ -251,12 +225,6 @@ class ASVEnv(gym.Env):
         # else:
         #     print("ERROR")      # if another state exists
         
-        # Add a penalty for being too close to an obstacle
-        if nearest_obstacle_distance <= danger_zone_threshold:
-            reward -= 1000 / nearest_obstacle_distance
-        # If 2 grids away from the obstacles (horizontally or vertically) => reward -50
-        # If 1 grid away from the obstacles (horizontally or vertically) => reward -100
-        # Add a reward/reduce penalty for getting closer to the goal
         reward -= distance_to_goal*0.1
 
         return reward
@@ -279,18 +247,6 @@ class ASVEnv(gym.Env):
             distance = np.sqrt((position[0] - px) ** 2 + (position[1] - py) ** 2)
             if distance < min_distance:
                 min_distance = distance
-        return min_distance
-    
-    def calculate_distance_to_nearest_obstacle(self, position):
-        x, y = position
-        min_distance = float('inf')
-        
-        for (obstacle_x, obstacle_y), state in self.grid_dict.items():
-            if state == COLLISION_STATE:
-                distance = np.sqrt((x - obstacle_x)**2 + (y - obstacle_y)**2)
-                if distance < min_distance:
-                    min_distance = distance
-        
         return min_distance
     
     def check_done(self, position):        
@@ -340,9 +296,6 @@ class ASVEnv(gym.Env):
                 path_x = [point['x'] for point in self.path]
                 path_y = [point['y'] for point in self.path]
                 self.ax1.plot(path_x, path_y, '-', color=GREEN)
-
-                for obj in self.obstacles:
-                    self.ax1.plot(obj['x'], obj['y'], marker='o', color=RED)
 
             self.agent_1.set_data(self.position[0], self.position[1])
             self.agent_1.set_marker((3, 0, self.current_heading - 90))
@@ -394,8 +347,6 @@ class ASVEnv(gym.Env):
         path_x = [point['x'] for point in self.path]
         path_y = [point['y'] for point in self.path]
         ax.plot(path_x, path_y, '-', color=GREEN)
-        for obj in self.obstacles:
-            ax.plot(obj['x'], obj['y'], marker='o', color=RED)
         ax.plot(self.position[0], self.position[1], marker='^', color=BLUE)
         step_x = [point[0] for point in self.step_taken]
         step_y = [point[1] for point in self.step_taken]
@@ -407,16 +358,17 @@ if __name__ == '__main__':
     env = ASVEnv()
     obs = env.reset()
 
-    print("Observation Space Shape", env.observation_space.shape)
-    print("Sample observation", len(env.observation_space.sample()))
-
-    print("Action Space Shape", env.action_space.n)
-    print("Action Space Sample", env.action_space.sample())
+    # print("Observation Space Shape", env.observation_space.shape)
+    # print("Observation size", len(env.get_observation()))
+    # print("Action Space Shape", env.action_space.n)
+    # print("Action Space Sample", env.action_space.sample())
 
     for _ in range(100):  # Run for 100 steps or until done
         action = env.action_space.sample()  # Take a random action
         obs, reward, done, truncated, info = env.step(action)
         env.render()
+        # print("Current observation", env.get_observation())
+
         if done:
             break
 
