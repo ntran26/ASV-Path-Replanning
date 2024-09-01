@@ -2,7 +2,7 @@ import gymnasium as gym
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.callbacks import CheckpointCallback
-from static_obs_env import ASVEnv
+from collision_avoidance_env import ASVEnv
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from gymnasium import spaces
@@ -25,12 +25,8 @@ if __name__ == '__main__':
     check_env(env)
 
     # Load the model
-    # model_path = "models/ppo_asv_model"
-    # model_path = "models/ppo_static_obstacles"
-    # model_path = "models/best_model"
-    # model_path = "models/static_obs_100000"
-    # model_path = "models/static_obs_500000"
-    model_path = "ppo_static_obstacles"
+    model_path = "Paper-implementation/collision_avoidance/model_500000"
+    # model_path = "Paper-implementation/collision_avoidance/ppo_static_obstacles"
 
     model = PPO.load(model_path)
 

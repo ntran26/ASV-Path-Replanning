@@ -15,29 +15,28 @@ YELLOW = (1, 1, 0)
 BLUE = (0, 0, 1)
 
 # Define map dimensions and start/goal points, number of static obstacles
-WIDTH = 40
+WIDTH = 100
 HEIGHT = 100
-START = (20, 10)
-GOAL = (20, 80)
-NUM_STATIC_OBS = 5
+START = (10, 10)
+GOAL = (90, 90)
+NUM_STATIC_OBS = 3
 
 # Define observation radius and grid size
-RADIUS = 20
-SQUARE_SIZE = 4
+RADIUS = 40
+SQUARE_SIZE = 5
 
 # Define initial heading angle, turn rate and number of steps
 INITIAL_HEADING = 90
-TURN_RATE = 3
-SPEED = 0.5
+TURN_RATE = 5
+SPEED = 1
 
 # Define states
-FREE_STATE = 0          # free space
-PATH_STATE = 1          # path
-COLLISION_STATE = 2     # obstacle or border
-GOAL_STATE = 3          # goal point
+FREE_STATE = 0         # free space
+COLLISION_STATE = 1    # obstacle or border
+GOAL_STATE = 2         # goal point
 
 # Define maximum steps
-MAX_NUM_STEP = 250
+MAX_NUM_STEP = 150
 
 class ASVEnv(gym.Env):
     metadata = {"render_modes": ["human"]}
@@ -57,10 +56,6 @@ class ASVEnv(gym.Env):
         self.center_point = (0,0)
         self.max_num_step = MAX_NUM_STEP
 
-        self.path = self.generate_path(self.start, self.goal)
-        self.boundary = self.generate_border(self.width, self.height)
-        self.goal_point = self.generate_goal(self.goal)
-
         # Define action space and observation space
         # 3 possible actions: left, right, straight
         ### OR
@@ -68,7 +63,7 @@ class ASVEnv(gym.Env):
         self.action_space = spaces.Discrete(3)
 
         # 4 possible states for observation, and the shape = number of grids inside the observation radius
-        self.observation_space = spaces.Box(low=0, high=3, shape=(77,), dtype=np.int32) 
+        self.observation_space = spaces.Box(low=0, high=2, shape=(193,), dtype=np.int32) 
         
         self.reset()
     
@@ -81,9 +76,7 @@ class ASVEnv(gym.Env):
             return COLLISION_STATE
         elif new_state == GOAL_STATE and current_state != COLLISION_STATE:
             return GOAL_STATE
-        elif new_state == PATH_STATE and current_state not in (COLLISION_STATE, GOAL_STATE):
-            return PATH_STATE
-        elif current_state not in (COLLISION_STATE, GOAL_STATE, PATH_STATE):
+        elif current_state not in (COLLISION_STATE, GOAL_STATE):
             return FREE_STATE
         return current_state
     
@@ -103,15 +96,20 @@ class ASVEnv(gym.Env):
         return int((n + mult / 2) // mult) * mult
     
     # Create a function to generate a dictionary, storing the grid coordinates and state
-    def fill_grid(self, objects, grid_size):
+    def fill_grid(self, objects, grid_size, center):
         grid_dict = {}
         for obj in objects:
             m = obj['x']
             n = obj['y']
             state = obj['state']
 
-            m = self.closest_multiple(m, grid_size)
-            n = self.closest_multiple(n, grid_size)
+            # Calculate the distance from the ASV's current position (center) to the object
+            distance_to_asv = np.sqrt((m - center[0]) ** 2 + (n - center[1]) ** 2)
+
+            # Check if the object is within the observation radius or if it's the goal (always include goal)
+            if distance_to_asv <= self.radius or state == GOAL_STATE:
+                m = self.closest_multiple(m, grid_size)
+                n = self.closest_multiple(n, grid_size)
 
             if (m, n) not in grid_dict:
                 grid_dict[(m, n)] = FREE_STATE
@@ -119,49 +117,20 @@ class ASVEnv(gym.Env):
             grid_dict[(m, n)] = self.get_priority_state(grid_dict[(m,n)], state)
         return grid_dict
     
-    def calculate_distance_to_path(self, position):
-        path_x = [point['x'] for point in self.path]
-        path_y = [point['y'] for point in self.path]
-        path_deviation = 0
-        min_distance = float('inf')
-        for px, py in zip(path_x, path_y):
-            distance = np.sqrt((position[0] - px) ** 2 + (position[1] - py) ** 2)
-            if distance < min_distance:
-                min_distance = distance
-                if min_distance <= self.grid_size/2:
-                    path_deviation = 0
-                elif min_distance > self.grid_size/2:
-                    path_deviation = ((distance + 2)//(self.grid_size))
-        # return min_distance
-        return int(path_deviation)
-    
-    def calculate_distance_to_goal(self, position):
-        goal_x = [point['x'] for point in self.goal_point]
-        goal_y = [point['y'] for point in self.goal_point]
-        min_distance = float('inf')
-        for px, py in zip(goal_x, goal_y):
-            distance = np.sqrt((position[0] - px) ** 2 + (position[1] - py) ** 2)
-            if distance < min_distance:
-                min_distance = distance/self.grid_size
-        return int(min_distance)
-    
-    def heading_deviation(self, current_heading, goal_position, agent_position):
-        # Calculate the heading deviation
-        optimal_heading = math.atan2(goal_position[1] - agent_position[1], 
-                                    goal_position[0] - agent_position[0])
-        heading_deviation = abs(optimal_heading - current_heading)
-        return heading_deviation
-    
-    def calculate_distance_to_nearest_obstacle(self, position):
-        x, y = position
-        min_distance = float('inf')
-        
-        for (obstacle_x, obstacle_y), state in self.grid_dict.items():
-            if state == COLLISION_STATE:
-                distance = np.sqrt((x - obstacle_x)**2 + (y - obstacle_y)**2)
-                if distance < min_distance:
-                    min_distance = distance
-        return int(min_distance)
+    def check_virtual_goal(self, position):
+        position = position
+        goal = self.goal
+        distance_to_goal = np.sqrt((position[0] - goal[0]) ** 2 + (position[1] - goal[1]) ** 2)
+        if distance_to_goal > self.radius:
+            dir_x = (goal[0] - position[0])/distance_to_goal
+            dir_y = (goal[1] - position[1])/distance_to_goal
+            if goal[0] > position[0] and goal[1] > position[1]:
+                virtual_goal_x = position[0] + 20 * dir_x
+                virtual_goal_y = position[1] + 20 * dir_y
+            virtual_goal = (virtual_goal_x, virtual_goal_y)
+        else:
+            virtual_goal = goal
+        return virtual_goal
     
     #                           -------- MAP GENERATION --------
 
@@ -179,49 +148,44 @@ class ASVEnv(gym.Env):
     # Create a function to generate static obstacles
     def generate_static_obstacles(self, num_obs):
         obstacles = []
-        # # Generate random obstacles around the map
-        # for _ in range(num_obs):
-        #     x = np.random.randint(0, self.width)
-        #     y = np.random.randint(0, self.height)
-        #     obstacles.append({'x': x, 'y': y, 'state': COLLISION_STATE})
-        # Generate 2 random obstacles along the path
+        # Generate random obstacles around the map
         for _ in range(num_obs):
-            x = self.start[0]
+            x = np.random.randint(self.start[0] + 10, self.goal[0] - 10)
             y = np.random.randint(self.start[1] + 10, self.goal[1] - 10)
-            # y = 30
             obstacles.append({'x': x, 'y': y, 'state': COLLISION_STATE})
         return obstacles
-    
-    # Function that generate a path line (list/array of points)
-    def generate_path(self, start_point, goal_point):
-        path = []
-        num_points = goal_point[1] - start_point[1]     # straight vertical line
-        for i in range(num_points):
-            y = start_point[1] + i
-            path.append({'x': start_point[0], 'y': y, 'state': PATH_STATE})
-        return path
     
     def generate_goal(self, goal_point):
         goal = []
         goal.append({'x': goal_point[0], 'y': goal_point[1], 'state': GOAL_STATE})
+        return goal
+    
+    def generate_virtual_goal(self, virtual_goal):
+        goal = []
+        goal.append({'x': virtual_goal[0], 'y': virtual_goal[1], 'state': GOAL_STATE})
         return goal
 
     #                           -------- MAIN FUNCTIONS --------
 
     def reset(self, seed=None, options=None):
         # super().reset(seed=seed)
-        self.obstacles = self.generate_static_obstacles(1)
-        self.objects_environment = self.obstacles + self.path + self.boundary + self.goal_point
-        self.grid_dict = self.fill_grid(self.objects_environment, self.grid_size)
-
         self.step_count = 0
         self.step_taken = []
         self.heading_taken = []
         self.current_heading = self.heading
         self.current_speed = self.speed
         self.position = self.start
-        self.done = False
+        self.virtual_goal = self.check_virtual_goal(self.position)
+
+        self.boundary = self.generate_border(self.width, self.height)
+        self.goal_point = self.generate_goal(self.goal)
+        self.virtual_goal = self.generate_virtual_goal(self.virtual_goal)
+        self.obstacles = self.generate_static_obstacles(NUM_STATIC_OBS)
+        self.objects_environment = self.obstacles+ self.boundary + self.goal_point
+        self.grid_dict = self.fill_grid(self.objects_environment, self.grid_size, self.position)
         self.grid = self.generate_grid(self.radius, self.grid_size, self.position)
+        
+        self.done = False
         return self.get_observation(), {}
     
     def check_done(self, position):        
@@ -274,6 +238,13 @@ class ASVEnv(gym.Env):
         #     self.position = (self.position[0] + self.speed * np.cos(np.radians(self.current_heading)),
         #                     self.position[1] + self.speed * np.sin(np.radians(self.current_heading)))
 
+        self.virtual_goal = self.check_virtual_goal(self.position)
+        virtual_goal_point = self.generate_virtual_goal(self.virtual_goal)
+
+        # Update grid_dict with the current ASV position
+        self.objects_environment = self.obstacles + self.boundary + self.goal_point + virtual_goal_point
+        self.grid_dict = self.fill_grid(self.objects_environment, self.grid_size, self.position)
+
         self.step_count += 1
         self.step_taken.append((self.position[0], self.position[1]))
         self.heading_taken.append(self.current_heading)
@@ -286,58 +257,14 @@ class ASVEnv(gym.Env):
     def calculate_reward(self, position):
         x, y = position
         state = self.grid_dict.get((self.closest_multiple(x, self.grid_size), self.closest_multiple(y, self.grid_size)), FREE_STATE)
-        distance_to_path = self.calculate_distance_to_path(self.position)
-        distance_to_goal = self.calculate_distance_to_goal(self.position)
-        # Calculate the distance to the nearest obstacle
-        nearest_obstacle_distance = self.calculate_distance_to_nearest_obstacle(self.position)
-        # Calculate the heading deviation
-        heading_deviation = self.heading_deviation(self.current_heading, self.goal, self.position)
-        # Set a threshold distance for significant penalty
-        danger_zone_threshold = self.grid_size * 1
-        
-        # reward = 0
-        # if state == COLLISION_STATE:
-        #     reward -= 1000
-        # elif state == GOAL_STATE:
-        #     reward += 500
-        # elif state == PATH_STATE:
-        #     reward += (15 - distance_to_goal*0.5)
-        # elif state == FREE_STATE:
-        #     reward -= (0 + distance_to_path*5 + distance_to_goal*0.5)
 
         reward = 0
         if state == COLLISION_STATE:
-            reward -= 100
+            reward -= 5
         elif state == GOAL_STATE:
             reward += 10
-        elif state == PATH_STATE:
-            reward = 0
         elif state == FREE_STATE:
-            reward -= 1
-
-        # # Test if the state is assigned correctly in every timestep
-        # if state == COLLISION_STATE:
-        #     print("Collide")
-        # elif state == GOAL_STATE:
-        #     print("Goal")
-        # elif state == PATH_STATE:
-        #     print("On Path")
-        # elif state == FREE_STATE:
-        #     print("Free Space")
-        # else:
-        #     print("ERROR")      # if another state exists
-        
-        # # Add a penalty for being too close to an obstacle
-        # if nearest_obstacle_distance <= danger_zone_threshold:
-        #     reward -= 1000 / nearest_obstacle_distance
-        # If 2 grids away from the obstacles (horizontally or vertically) => reward -50
-        # If 1 grid away from the obstacles (horizontally or vertically) => reward -100
-        # Add a reward/reduce penalty for getting closer to the goal
-
-        # reward -= distance_to_goal*0.5
-
-        # Reward for reducing heading deviation
-        # reward -= heading_deviation
+            reward = 0
         
         return reward
 
@@ -360,25 +287,25 @@ class ASVEnv(gym.Env):
                 self.agent_2, = self.ax2.plot([], [], marker='^', color=BLUE)
                 self.observation_horizon1 = plt.Circle(self.start, self.radius, color=BLUE, fill=False)
                 self.observation_horizon2 = plt.Circle((0, 0), self.radius, color=BLUE, fill=False)
+                self.virtual_goal_point, = self.ax1.plot([], [], marker='o', color=GREEN)
+
                 self.ax1.add_patch(self.observation_horizon1)
                 self.ax2.add_patch(self.observation_horizon2)
 
                 self.ax1.plot(self.start[0], self.start[1], marker='o', color=BLUE)
-                self.ax1.plot(self.goal[0], self.goal[1], marker='o', color=YELLOW)
+                self.ax1.plot(self.goal[0], self.goal[1], marker='o', color=GREEN)
 
                 for obj in self.boundary:
                     boundary_line = plt.Rectangle((obj['x'], obj['y']), 1, 1, edgecolor=BLACK, facecolor=BLACK)
                     self.ax1.add_patch(boundary_line)
-                
-                path_x = [point['x'] for point in self.path]
-                path_y = [point['y'] for point in self.path]
-                self.ax1.plot(path_x, path_y, '-', color=GREEN)
 
                 for obj in self.obstacles:
                     self.ax1.plot(obj['x'], obj['y'], marker='o', color=RED)
 
             self.agent_1.set_data(self.position[0], self.position[1])
             self.agent_1.set_marker((3, 0, self.current_heading - 90))
+            self.virtual_goal_point.set_data(self.virtual_goal[0], self.virtual_goal[1])
+            self.virtual_goal_point.set_marker("o")
 
             self.observation_horizon1.center = self.position
 
@@ -392,10 +319,8 @@ class ASVEnv(gym.Env):
                 color = WHITE
                 if state == COLLISION_STATE:
                     color = RED
-                elif state == PATH_STATE:
-                    color = GREEN
                 elif state == GOAL_STATE:
-                    color = YELLOW
+                    color = GREEN
                 rect = plt.Rectangle((cx - self.grid_size / 2 - self.position[0], cy - self.grid_size / 2 - self.position[1]), self.grid_size, self.grid_size,
                                     edgecolor='gray', facecolor=color)
                 rect.set_zorder(1)
@@ -422,13 +347,10 @@ class ASVEnv(gym.Env):
         ax.set_xlim(-self.radius, self.width + self.radius)
         ax.set_ylim(-self.radius, self.height + self.radius)
         ax.plot(self.start[0], self.start[1], marker='o', color=BLUE)
-        ax.plot(self.goal[0], self.goal[1], marker='o', color=YELLOW)
+        ax.plot(self.goal[0], self.goal[1], marker='o', color=GREEN)
         for obj in self.boundary:
             boundary_line = plt.Rectangle((obj['x'], obj['y']), 1, 1, edgecolor=BLACK, facecolor=BLACK)
             ax.add_patch(boundary_line)
-        path_x = [point['x'] for point in self.path]
-        path_y = [point['y'] for point in self.path]
-        ax.plot(path_x, path_y, '-', color=GREEN)
         for obj in self.obstacles:
             ax.plot(obj['x'], obj['y'], marker='o', color=RED)
         ax.plot(self.position[0], self.position[1], marker='^', color=BLUE)
@@ -461,17 +383,12 @@ class ASVEnv(gym.Env):
         ax1.plot(self.start[0], self.start[1], marker='o', color=BLUE)
 
         # Plot goal point
-        ax1.plot(self.goal[0], self.goal[1], marker='o', color=YELLOW)
+        ax1.plot(self.goal[0], self.goal[1], marker='o', color=GREEN)
 
         # Plot the boundary
         for obj in self.boundary:
             boundary_line = plt.Rectangle((obj['x'], obj['y']), 1, 1, edgecolor=BLACK, facecolor=BLACK)
             ax1.add_patch(boundary_line)
-        
-        # Plot the path
-        path_x = [point['x'] for point in self.path]
-        path_y = [point['y'] for point in self.path]
-        ax1.plot(path_x, path_y, '-', color=GREEN)
 
         # Plot obstacles
         for obj in self.obstacles:
@@ -518,10 +435,8 @@ class ASVEnv(gym.Env):
                 color = WHITE
                 if state == COLLISION_STATE:
                     color = RED
-                elif state == PATH_STATE:
-                    color = GREEN
                 elif state == GOAL_STATE:
-                    color = YELLOW
+                    color = GREEN
                 rect = plt.Rectangle((cx - self.grid_size / 2 - current_pos[0], cy - self.grid_size / 2 - current_pos[1]), self.grid_size, self.grid_size,
                                      edgecolor='gray', facecolor=color)
                 rect.set_zorder(1)     # make sure the grids don't overlay other components
@@ -551,18 +466,21 @@ if __name__ == '__main__':
     env = ASVEnv()
     obs = env.reset()
 
-    print("Observation Space Shape", env.observation_space.shape)
-    print("Sample observation", len(env.get_observation()))
+    # print("Observation Space Shape", env.observation_space.shape)
+    # print("Sample observation", len(env.get_observation()))
 
-    print("Action Space Shape", env.action_space.n)
-    print("Action Space Sample", env.action_space.sample())
+    # print("Action Space Shape", env.action_space.n)
+    # print("Action Space Sample", env.action_space.sample())
 
     for _ in range(env.max_num_step):  # Run for 100 steps or until done
         action = env.action_space.sample()  # Take a random action
         # print(env.get_observation())
+        # print(len(env.get_observation()))
         # print(env.calculate_distance_to_goal(env.position))
         # print(env.calculate_distance_to_path(env.position))
-        print(env.calculate_reward(env.position))
+        # print(env.calculate_reward(env.position))
+        # print(len(env.grid_dict))
+
         obs, reward, done, truncated, info = env.step(action)
         env.render()
         if done:
