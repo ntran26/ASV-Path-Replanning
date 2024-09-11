@@ -220,6 +220,7 @@ second = int(time - 60*minute)
 print(f"Total time = {hour} : {minute} : {second}")
 
 # Save the model
+# model.save("Paper-implementation/static_obstacles/ppo_static_obstacles")
 model.save("Paper-implementation/static_obstacles/ppo_static_obstacles")
 
 # Plot rewards

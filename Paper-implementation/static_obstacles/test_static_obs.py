@@ -32,8 +32,6 @@ if __name__ == '__main__':
         model_path = "Paper-implementation/static_obstacles/ppo_static_obstacles_v1"
     elif version == 2:
         model_path = "Paper-implementation/static_obstacles/ppo_static_obstacles_v2"
-    elif version == 3:
-        model_path = "Paper-implementation/static_obstacles/ppo_static_obstacles_v3"
     else:
         model_path = "Paper-implementation/static_obstacles/ppo_static_obstacles"
 
