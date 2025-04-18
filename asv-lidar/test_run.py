@@ -12,7 +12,7 @@ UPDATE_RATE = 0.5
 RENDER_FPS = 10
 MAP_WIDTH = 400
 MAP_HEIGHT = 600
-NUM_OBS = 10
+NUM_OBS = 5
 COLLISION_RANGE = 10
 
 # Actions
@@ -25,7 +25,7 @@ rudder_action = {
     STBD: 25
 }
 
-class ASVLidarEnv(gym.Env):
+class testEnv(gym.Env):
     """ Autonomous Surface Vessel w/ LIDAR Gymnasium environment
 
         Args:
@@ -78,7 +78,7 @@ class ASVLidarEnv(gym.Env):
 
         """
         Observation space:
-            lidar: an array of lidar range: [63 values]
+            lidar: an array of lidar range: [42 values]
             pos: (x,y) coordinate of asv
             hdg: heading/yaw of the asv
             dhdg: rate of change of heading
@@ -108,8 +108,8 @@ class ASVLidarEnv(gym.Env):
         self.map_border = [
                             [(0, 0), (0, self.map_height),(0,0),(0, self.map_height)],  
                             [(0, self.map_height), (self.map_width, self.map_height),(0, self.map_height),(self.map_width, self.map_height)],
-                            [(self.map_width, self.map_height), (self.map_width, 0),(self.map_width, self.map_height),(self.map_width, 0)],
-                            [(0, 0), (self.map_width, 0),(0,0),(self.map_width, 0)]
+                            [(self.map_width, self.map_height), (self.map_width, 0),(self.map_width, self.map_height),(self.map_width, 0)]
+                            # [(0, 0), (self.map_width, 0),(0,0),(self.map_width, 0)]
                         ]
 
         # Initialize video recorder
@@ -305,10 +305,10 @@ class ASVLidarEnv(gym.Env):
         #     reward = abs(self.angle_diff/10)
 
         # penatly for each step taken
-        # if dy < 0:
-        #     r_exist = -10
-        # else:
-        r_exist = -0.1
+        if dy < 0:
+            r_exist = -10
+        else:
+            r_exist = -0.1
 
         # heading alignment reward (reward = 1 if aligned, -1 if opposite)
         angle_diff_rad = np.radians(self.angle_diff)
@@ -334,13 +334,13 @@ class ASVLidarEnv(gym.Env):
             r_goal = 0
 
         # Combined rewards
-        lambda_ = 0.8       # weighting factor
-        # reward = lambda_ * r_pf + (1 - lambda_) * r_oa + r_exist + r_goal + r_heading
+        lambda_ = 0.7       # weighting factor
+        reward = lambda_ * r_pf + (1 - lambda_) * r_oa + r_exist + r_goal + r_heading
 
-        if np.any(self.lidar.ranges.astype(np.int64) <= self.collision):
-            reward = -1000
-        else:
-            reward = lambda_ * r_pf + (1 - lambda_) * r_oa + r_heading + r_exist + r_goal
+        # if np.any(self.lidar.ranges.astype(np.int64) <= self.collision):
+        #     reward = -1000
+        # else:
+        #     reward = lambda_ * r_pf + (1 - lambda_) * r_oa + r_heading + r_exist + r_goal
 
         terminated = self.check_done((self.asv_x, self.asv_y))
         return self._get_obs(), reward, terminated, False, {}
@@ -404,64 +404,3 @@ class ASVLidarEnv(gym.Env):
                 self.video_writer = cv2.VideoWriter('asv_lidar.mp4', fourcc, self.video_fps, self.frame_size)
 
             self.video_writer.write(frame)
-
-if __name__ == '__main__':
-    env = ASVLidarEnv(render_mode='human')
-    env.reset()
-    pygame.event.set_allowed((pygame.QUIT,pygame.KEYDOWN,pygame.KEYUP))
-    action = CENTER
-    total_reward = 0
-    while True:
-        # # Manual control
-        # for event in pygame.event.get():
-        #     if event.type == pygame.QUIT:
-        #         pygame.display.quit()
-        #         pygame.quit()
-        #         exit()
-        #     elif event.type == pygame.KEYUP:
-        #         action = CENTER
-        #     elif event.type == pygame.KEYDOWN:
-        #         if event.key == pygame.K_RIGHT:
-        #             action = STBD
-        #         elif event.key == pygame.K_LEFT:
-        #             action = PORT
-        # obs,rew,term,_,_ = env.step(action)
-        # lidar_list = obs['lidar']
-        
-        # Random actions
-        action = env.action_space.sample()
-        obs,rew,term,_,_ = env.step(action)
-
-        # print(lidar_list)
-        # print(total_reward)
-        # print(obs)
-        total_reward += rew
-        if term:
-            print(f"Elapsed time: {env.elapsed_time}, Reward: {total_reward:0.2f}")
-
-            # Save path taken as image
-            path_surface = pygame.Surface((MAP_WIDTH, MAP_HEIGHT))
-            path_surface.fill((255,255,255))
-
-            for i in range(1, len(env.asv_path)):
-                pygame.draw.circle(path_surface, (0, 0, 200), env.asv_path[i], 5)
-
-            # Draw obstacles
-            for obs in env.obstacles:
-                pygame.draw.polygon(path_surface, (200, 0, 0), obs)
-            
-            # Draw Path
-            pygame.draw.line(path_surface,(0,200,0),(env.start_x,env.start_y),(env.goal_x,env.goal_y),5)
-            pygame.draw.circle(path_surface,(100,0,0),(env.tgt_x,env.tgt_y),5)
-
-            # Draw map boundaries
-            pygame.draw.line(path_surface, (200, 0, 0), (0,0), (0,env.map_height), 5)
-            pygame.draw.line(path_surface, (200, 0, 0), (0,env.map_height), (env.map_width,env.map_height), 5)
-            pygame.draw.line(path_surface, (200, 0, 0), (env.map_width,0), (env.map_width,env.map_height), 5)
-            pygame.draw.line(path_surface, (200, 0, 0), (0,0), (env.map_width,0), 5)
-
-            pygame.image.save(path_surface, "asv_path_result.png")          
-
-            pygame.display.quit()
-            pygame.quit()
-            exit()
