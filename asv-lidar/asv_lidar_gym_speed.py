@@ -3,7 +3,8 @@ from gymnasium.spaces import Dict, Box, Discrete
 import numpy as np
 import pygame
 import pygame.freetype
-from ship_model import ShipModel, THRUST_COEF, DRAG_COEF
+from ship_model import ShipModel
+from ship_model import THRUST_COEF, DRAG_COEF
 from asv_lidar import Lidar, LIDAR_RANGE, LIDAR_BEAMS
 from images import BOAT_ICON
 import cv2
@@ -18,6 +19,13 @@ COLLISION_RANGE = 10
 # Speed control (rpm command mapped from action)
 RPM_MIN = 0
 RPM_MAX = 200
+
+# Reward shaping parameters (aligned with the paper)
+# NOTE: Angles in the paper are treated in radians; we convert our degree-based lidar angles.
+GAMMA_E = 0.05      # cross-track decay (paper Eq. 31)
+GAMMA_THETA = 4.0   # angle weighting for obstacle penalty (paper Eq. 32)
+GAMMA_X = 0.005     # distance scaling for obstacle penalty (paper Eq. 32)
+EPS_X = 1.0         # removes singularity at x_i = 0 (paper text below Eq. 32)
 
 # Actions
 PORT = 0
@@ -80,6 +88,11 @@ class ASVLidarEnv(gym.Env):
         self.model = ShipModel()
         self.model._v = 4.5
 
+        # Approximate maximum speed (used for reward normalization, paper Eq. 31)
+        # At steady state (rudder ~ 0): THRUST_COEF*rpm^2 ~= DRAG_COEF*v^2  => v ~= sqrt(THRUST_COEF/DRAG_COEF)*rpm
+        self.u_max = float(np.sqrt(max(THRUST_COEF, 1e-12) / max(DRAG_COEF, 1e-12)) * RPM_MAX)
+        self.u_max = max(self.u_max, 1e-6)
+
         """
         Observation space:
             lidar: an array of lidar range: [63 values]
@@ -97,9 +110,10 @@ class ASVLidarEnv(gym.Env):
                 "hdg"  : Box(low=0,high=360,shape=(1,),dtype=np.int16),
                 "dhdg" : Box(low=0,high=36,shape=(1,),dtype=np.int16),
                 "spd"  : Box(low=0.0, high=10.0, shape=(1,), dtype=np.float32),
+                "spd_norm": Box(low=0.0, high=1.5, shape=(1,), dtype=np.float32),
                 "tgt"  : Box(low=-50,high=50,shape=(1,),dtype=np.int16),
                 "target_heading": Box(low=-180,high=180,shape=(1,),dtype=np.int16)
-
+            
             }
         )
 
@@ -136,6 +150,7 @@ class ASVLidarEnv(gym.Env):
             'hdg': np.array([self.asv_h],dtype=np.int16),
             'dhdg': np.array([self.asv_w],dtype=np.int16),
             'spd': np.array([self.model._v], dtype=np.float32),
+            'spd_norm': np.array([min(max(self.model._v / self.u_max, 0.0), 1.5)], dtype=np.float32),
             'tgt': np.array([self.tgt],dtype=np.int16),
             'target_heading': np.array([self.angle_diff],dtype=np.int16)
         }
@@ -300,21 +315,27 @@ class ASVLidarEnv(gym.Env):
         # else:
         r_exist = -1
 
-        # heading alignment reward (reward = 1 if aligned, -1 if opposite)
-        angle_diff_rad = np.radians(self.angle_diff)
-        r_heading = np.cos(angle_diff_rad)
+        # --- Paper-aligned reward terms ---
+        # Path-following reward (paper Eq. 31):
+        #   r_pf(t) = -1 + (exp(-gamma_e*|y_e|) + 1) * ( (|v|/U_max) * cos(chi_tilde) + 1 )
+        # Here:
+        #   y_e ~ self.tgt (cross-track error in pixels)
+        #   chi_tilde ~ self.angle_diff (course/heading error in degrees)
+        speed = float(max(self.model._v, 0.0))
+        chi_tilde = float(np.radians(self.angle_diff))
+        r_pf = -1.0 + (np.exp(-GAMMA_E * abs(self.tgt)) + 1.0) * ((speed * np.cos(chi_tilde) / self.u_max) + 1.0)
 
-        # path following reward
-        r_pf = np.exp(-0.05 * abs(self.tgt))
-
-        # obstacle avoidance reward
+        # Obstacle avoidance reward (paper Eq. 32): weighted average of a closeness penalty.
+        # We cannot exactly reproduce the paper's sensor configuration (no sector pooling),
+        # but we do match the functional form using our beam angles and ranges.
         lidar_list = self.lidar.ranges.astype(np.float32)
-        r_oa = 0
-        for i, dist in enumerate(lidar_list):
-            theta = self.lidar.angles[i]    # angle of lidar beam
-            weight = 1 / (1 + abs(theta))   # prioritize beams closer to center/front
-            r_oa += weight / max(dist, 1)
-        r_oa = -r_oa / len(lidar_list)
+        angles_deg = self.lidar.angles  # degrees
+
+        weights = 1.0 / (1.0 + np.abs(GAMMA_THETA * np.radians(angles_deg)))
+        # closeness penalty grows rapidly as distance decreases; EPS_X removes singularity at 0
+        dist = np.maximum(lidar_list, EPS_X)
+        penalty = 1.0 / (GAMMA_X * (dist ** 2))
+        r_oa = -float(np.sum(weights * penalty) / max(np.sum(weights), 1e-6))
 
         # if the agent reaches goal
         self.distance_to_goal = np.linalg.norm([self.asv_x - self.goal_x, self.asv_y - self.goal_y])
@@ -323,14 +344,15 @@ class ASVLidarEnv(gym.Env):
         else:
             r_goal = 0
 
-        # Combined rewards
-        lambda_ = 0.1       # weighting factor
-        # reward = lambda_ * r_pf + (1 - lambda_) * r_oa + r_exist + r_goal + r_heading
+        # Combined reward (paper Eq. 34):
+        #   r(t) = lambda*r_pf(t) + (1-lambda)*r_oa(t) + r_exists   (if no collision)
+        # Collision case is handled separately with a large negative penalty.
+        lambda_ = 0.1  # trade-off between path following and obstacle avoidance
 
         if np.any(self.lidar.ranges.astype(np.int64) <= self.collision):
-            reward = -1000
+            reward = -1000.0
         else:
-            reward = lambda_ * r_pf + (1 - lambda_) * r_oa + r_heading + r_exist + r_goal
+            reward = (lambda_ * r_pf) + ((1.0 - lambda_) * r_oa) + r_exist + r_goal
 
         terminated = self.check_done((self.asv_x, self.asv_y))
         return self._get_obs(), reward, terminated, False, {}
