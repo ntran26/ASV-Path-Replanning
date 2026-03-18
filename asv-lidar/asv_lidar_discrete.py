@@ -29,7 +29,7 @@ ALPHA_R = 0.1
 R_COLLISION = -2000.0
 
 # Speed control (rpm)
-RPM_MIN = 30
+RPM_MIN = 0
 RPM_MAX = 32
 U_MAX = float(np.sqrt(THRUST_COEF / DRAG_COEF) * RPM_MAX)
 MAX_IN = 1
@@ -40,9 +40,9 @@ PORT = 0
 CENTER = 1
 STBD = 2
 rudder_action = {
-    PORT: -25,
+    PORT: -100,
     CENTER: 0,
-    STBD: 25
+    STBD: 100
 }
 
 class ASVLidarEnv(gym.Env):
@@ -128,7 +128,9 @@ class ASVLidarEnv(gym.Env):
             rudder command: rudder angle percentage for ShipModel.update()
             throttle command: RPM for [RPM_MIN, RPM_MAX]
         """
-        self.action_space = Box(low=np.array([-1.0, -1.0]), high=np.array([1.0, 1.0]), dtype=np.float32)
+        # self.action_space = Box(low=np.array([-1.0, -1.0]), high=np.array([1.0, 1.0]), dtype=np.float32)
+        self.action_space = Discrete(3)
+
         
         # LIDAR
         self.lidar = Lidar()
@@ -383,20 +385,20 @@ class ASVLidarEnv(gym.Env):
 
     def step(self, action):
         self.elapsed_time += UPDATE_RATE
-        rudder_cmd = float(np.clip(action[0], MIN_IN, MAX_IN))
-        throttle_cmd = float(np.clip(action[1], MIN_IN, MAX_IN))
+        rudder_cmd = rudder_action[int(action)]
+        # throttle_cmd = float(np.clip(action[1], MIN_IN, MAX_IN))
 
         # Map rudder_cmd [-1,1] -> rudder [-25, 25]
-        rudder = rudder_cmd * 100
+        # rudder = rudder_cmd * 100
 
         # Map throttle_cmd [-1,1] -> rpm [RPM_MIN, RPM_MAX]
-        rpm = (throttle_cmd - MIN_IN) * ((RPM_MAX - RPM_MIN)/(MAX_IN - MIN_IN)) + RPM_MIN
+        # rpm = (throttle_cmd - MIN_IN) * ((RPM_MAX - RPM_MIN)/(MAX_IN - MIN_IN)) + RPM_MIN
 
         # Store current position
         x_prev = float(self.asv_x)
         y_prev = float(self.asv_y)
 
-        dx,dy,h,w = self.model.update(rpm, rudder, UPDATE_RATE)
+        dx,dy,h,w = self.model.update(RPM_MAX, rudder_cmd, UPDATE_RATE)
         self.asv_x += dx
         self.asv_y += dy
         self.asv_h = h
@@ -707,10 +709,24 @@ if __name__ == '__main__':
     pygame.event.set_allowed((pygame.QUIT,pygame.KEYDOWN,pygame.KEYUP))
     action = CENTER
     total_reward = 0
-    while True:        
+    while True:
+        # Manual control
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.display.quit()
+                pygame.quit()
+                exit()
+            elif event.type == pygame.KEYUP:
+                action = CENTER
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_RIGHT:
+                    action = STBD
+                elif event.key == pygame.K_LEFT:
+                    action = PORT
+
         # Random actions
-        action = env.action_space.sample()
-        action = [-1, 1]
+        # action = env.action_space.sample()
+        action = 0
         obs,rew,term,_,_ = env.step(action)
         print(action)
         total_reward += rew
