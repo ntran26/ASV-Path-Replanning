@@ -1,23 +1,9 @@
 import gymnasium as gym
-from gymnasium.spaces import Dict, Box
+from gymnasium.spaces import Dict, Box, Discrete
 import numpy as np
 import pygame
 import pygame.freetype
-from ship_model_selector import (
-    ShipModel,
-    MODEL_RPM_MAX,
-    MODEL_U_MAX,
-    model_u_body,
-    model_v_body,
-    model_rudder_deg,
-    MAX_RUD_ANGLE,
-    MAX_SURGE_SPEED,
-    MAX_SWAY_SPEED,
-    VESSEL_LENGTH,
-    VESSEL_WIDTH,
-    HULL_MARGIN,
-    HULL_FORWARD_SHIFT,
-)
+from ship_model import ShipModel, THRUST_COEF, DRAG_COEF, VESSEL_LENGTH, VESSEL_WIDTH, HULL_MARGIN, HULL_FORWARD_SHIFT
 from asv_lidar import Lidar, LIDAR_RANGE, LIDAR_BEAMS
 from test_run import TestCase
 from images import BOAT_ICON
@@ -44,8 +30,8 @@ R_COLLISION = -2000.0
 
 # Speed control (rpm)
 RPM_MIN = 0
-RPM_MAX = float(MODEL_RPM_MAX)
-U_MAX = float(MODEL_U_MAX)
+RPM_MAX = 24
+U_MAX = float(np.sqrt(THRUST_COEF / DRAG_COEF) * RPM_MAX)
 MAX_IN = 1
 MIN_IN = -1
 
@@ -130,18 +116,9 @@ class ASVLidarEnv(gym.Env):
                 "lidar": Box(low=0, high=LIDAR_RANGE, shape=(LIDAR_BEAMS,), dtype=np.float32),
                 "pos"  : Box(low=np.array([0,0]),high=np.array(self.world_size),shape=(2,),dtype=np.float32),
                 "hdg"  : Box(low=0,high=360,shape=(1,),dtype=np.float32),
-                "dhdg" : Box(low=-180.0,high=180.0,shape=(1,),dtype=np.float32),
-                "speed"  : Box(low=0.0, high=5.0, shape=(1,), dtype=np.float32),
-                "u_body": Box(low=-float(MAX_SURGE_SPEED), high=float(MAX_SURGE_SPEED), shape=(1,), dtype=np.float32),
-                "v_body": Box(low=-float(MAX_SWAY_SPEED), high=float(MAX_SWAY_SPEED), shape=(1,), dtype=np.float32),
-                "rudder_state": Box(low=-float(MAX_RUD_ANGLE), high=float(MAX_RUD_ANGLE), shape=(1,), dtype=np.float32),
-                "distance_to_goal": Box(
-                    low=0.0,
-                    high=float(np.hypot(self.map_width, self.map_height)),
-                    shape=(1,),
-                    dtype=np.float32
-                ),
-                "tgt"  : Box(low=0,high=self.map_width/2,shape=(1,),dtype=np.float32),
+                "dhdg" : Box(low=0,high=36,shape=(1,),dtype=np.float32),
+                "speed"  : Box(low=0.0, high=10.0, shape=(1,), dtype=np.float32),
+                "tgt"  : Box(low=-50,high=50,shape=(1,),dtype=np.float32),
                 "target_heading": Box(low=-180,high=180,shape=(1,),dtype=np.float32)
             }
         )
@@ -182,10 +159,6 @@ class ASVLidarEnv(gym.Env):
             'hdg': np.array([self.asv_h],dtype=np.float32),
             'dhdg': np.array([self.asv_w],dtype=np.float32),
             'speed': np.array([self.speed_mps], dtype=np.float32),
-            'u_body': np.array([float(model_u_body(self.model))], dtype=np.float32),
-            'v_body': np.array([float(model_v_body(self.model))], dtype=np.float32),
-            'rudder_state': np.array([float(model_rudder_deg(self.model))], dtype=np.float32),
-            'distance_to_goal': np.array([self.distance_to_goal], dtype=np.float32),
             'tgt': np.array([self.tgt],dtype=np.float32),
             'target_heading': np.array([self.angle_diff],dtype=np.float32)
         }
@@ -265,7 +238,7 @@ class ASVLidarEnv(gym.Env):
 
         # border collision: any corner outside boundary
         if min(xs) < 0 or max(xs) > self.map_width or min(ys) < 0 or max(ys) > self.map_height:
-            return True, "border"
+            return True
         
         hx0, hx1 = min(xs), max(xs)
         hy0, hy1 = min(ys), max(ys)
@@ -281,9 +254,9 @@ class ASVLidarEnv(gym.Env):
             if hx1 < ox0 or ox1 < hx0 or hy1 < oy0 or oy1 < hy0:
                 continue
             if self._polys_intersect_sat(hull, obs):
-                return True, "obstacle"
+                return True
             
-        return False, None
+        return False
 
     def _generate_path(self, start_x, start_y, goal_x, goal_y):
         path_length = max(2, int(np.hypot(abs(goal_x - start_x), abs(goal_y - start_y))))
@@ -352,6 +325,7 @@ class ASVLidarEnv(gym.Env):
 
         # Reset dynamics + sensors
         self.model = ShipModel()
+        self.model._v = 0
         self.lidar.reset()
 
         # Randomize start and goal positions
@@ -393,8 +367,7 @@ class ASVLidarEnv(gym.Env):
     # Configure terminal condition
     def check_done(self, position):
         # collide with an obstacle or out of bounds
-        collided, _ = self._check_collision_geom()
-        if collided:
+        if self._check_collision_geom():
             return True
         
         # # lidar < 1m
@@ -458,8 +431,41 @@ class ASVLidarEnv(gym.Env):
         self.distance_to_goal = np.linalg.norm([self.asv_x - self.goal_x, self.asv_y - self.goal_y])
 
         # Define terminal flags
-        collided, collision_type = self._check_collision_geom()
+        collided = bool(self._check_collision_geom())
         reached_goal = bool(self.distance_to_goal <= VESSEL_LENGTH)
+
+        # r_exist = -0.1
+
+        # # heading alignment reward (reward = 1 if aligned, -1 if opposite)
+        # angle_diff_rad = np.radians(self.angle_diff)
+        # r_heading = np.cos(angle_diff_rad)
+
+        # # path following reward
+        # r_pf = np.exp(-0.05 * abs(self.tgt))
+
+        # # obstacle avoidance reward
+        # lidar_list = self.lidar.ranges.astype(np.float32)
+        # r_oa = 0
+        # for i, dist in enumerate(lidar_list):
+        #     theta = self.lidar.angles[i]    # angle of lidar beam
+        #     weight = 1 / (1 + abs(theta))   # prioritize beams closer to center/front
+        #     r_oa += weight / max(dist, 1)
+        # r_oa = -r_oa / len(lidar_list)
+
+        # # if the agent reaches goal
+        # self.distance_to_goal = np.linalg.norm([self.asv_x - self.goal_x, self.asv_y - self.goal_y])
+        # if reached_goal:
+        #     r_goal = 50
+        # else:
+        #     r_goal = 0
+
+        # # Combined rewards
+        # lambda_ = 0.5       # weighting factor
+
+        # if collided:
+        #     reward = -1000
+        # else:
+        #     reward = lambda_ * r_pf + (1 - lambda_) * r_oa + r_heading + r_exist + r_goal
         
         lam = LAMBDA_REWARD
 
@@ -507,7 +513,14 @@ class ASVLidarEnv(gym.Env):
         else:
             reward = float(lam * r_pf + (1.0 - lam) * r_oa + r_exist)
 
-        terminated = bool(collided or reached_goal)
+        terminated = self.check_done((self.asv_x, self.asv_y))
+        # info = {
+        #     # navigation + terminal diagnostics
+        #     "distance_to_goal": float(self.distance_to_goal),
+        #     "tgt": float(self.tgt),
+        #     "collided": bool(collided),
+        #     "reached_goal": bool(reached_goal),
+        # }
 
         info = {
             # reward mix + components
@@ -535,14 +548,12 @@ class ASVLidarEnv(gym.Env):
             # speed / control diagnostics
             "speed_mps": float(self.speed_mps),
             "rpm": float(rpm),
-            "rudder_deg": float(rudder_cmd * MAX_RUD_ANGLE),
+            "rudder_deg": float(rudder_cmd * 30),
 
             # navigation + terminal diagnostics
             "distance_to_goal": float(self.distance_to_goal),
             "tgt": float(self.tgt),
             "collided": bool(collided),
-            "collision": bool(collided),
-            "collision_type": collision_type,
             "reached_goal": bool(reached_goal),
         }
 
