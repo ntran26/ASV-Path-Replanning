@@ -1,14 +1,15 @@
-"""Stage-1 sweep for the faithful 4DOF Bluefin model.
+"""Stage-1 motion sweep for the *faithful* 4DOF Bluefin model.
 
-Focus: straight-line / surge behavior.
+This version only sweeps parameters that actually exist in the faithful
+`ship_model_bluefin_4dof.py` port.
+
 Run with no arguments:
 
-    python sweep_bluefin_4dof_motion.py
+    python sweep_bluefin_4dof_motion_faithful.py
 """
 
 from __future__ import annotations
 
-import importlib
 import itertools
 import json
 from pathlib import Path
@@ -23,12 +24,13 @@ from bluefin_4dof_utils import (
     safe_rel_error,
 )
 
-OUT_DIR = ROOT / "bluefin_4dof_motion_sweep"
+OUT_DIR = ROOT / "bluefin_4dof_motion_sweep_faithful"
+MODULE_NAME = "ship_model_bluefin_4dof"
 
-RPM_GRID = [12.0, 15.0, 18.0, 21.0]
-RPM_INPUT_TO_SOLVER_RPM_GRID = [50.0, 66.6666666667, 80.0, 90.0]
-PROPELLER_THRUST_SCALE_GRID = [0.8, 1.0, 1.2, 1.5]
-PROPELLER_ADVANCE_SCALE_GRID = [0.8, 1.0, 1.2, 1.4]
+# Narrowed around the currently promising region.
+RPM_GRID = [15.0, 16.0, 17.0]
+RPM_INPUT_TO_SOLVER_RPM_GRID = [85.0, 90.0, 95.0]
+PROPELLER_THRUST_SCALE_GRID = [1.3, 1.4, 1.5, 1.6, 1.7]
 
 DT = 0.1
 DURATION_S = 40.0
@@ -55,32 +57,34 @@ def main() -> None:
     real_motion, _ = load_default_real_benchmarks()
     rows: List[Dict[str, Any]] = []
 
-    for rpm, rpm_scale, prop_scale, advance_scale in itertools.product(
+    for rpm, rpm_scale, prop_scale in itertools.product(
         RPM_GRID,
         RPM_INPUT_TO_SOLVER_RPM_GRID,
         PROPELLER_THRUST_SCALE_GRID,
-        PROPELLER_ADVANCE_SCALE_GRID,
     ):
         params = {
             "RPM_INPUT_TO_SOLVER_RPM": rpm_scale,
             "PROPELLER_THRUST_SCALE": prop_scale,
-            "PROPELLER_ADVANCE_SCALE": advance_scale,
-            # faithful defaults for all other scales
+            # faithful defaults for all other active scales
             "RUDDER_FORCE_SCALE": 1.0,
-            "RUDDER_YAW_SCALE": 1.0,
-            "LINEAR_YAW_DAMP": 0.0,
             "BOW_THRUSTER_SCALE": 1.0,
             "ROLL_DAMP_SCALE": 1.0,
             "ROLL_RESTORE_SCALE": 1.0,
         }
-        sim = run_open_loop(rpm=rpm, rudder_deg=0.0, duration_s=DURATION_S, dt=DT, params=params)
+        sim = run_open_loop(
+            module_name=MODULE_NAME,
+            rpm=rpm,
+            rudder_deg=0.0,
+            duration_s=DURATION_S,
+            dt=DT,
+            params=params,
+        )
         metrics = extract_motion_metrics(sim)
         score = score_motion(metrics, real_motion)
         row = {
             "rpm": rpm,
             "RPM_INPUT_TO_SOLVER_RPM": rpm_scale,
             "PROPELLER_THRUST_SCALE": prop_scale,
-            "PROPELLER_ADVANCE_SCALE": advance_scale,
             "score_total": score,
             **metrics,
         }
@@ -91,30 +95,26 @@ def main() -> None:
     best_params = {
         "RPM_INPUT_TO_SOLVER_RPM": best["RPM_INPUT_TO_SOLVER_RPM"],
         "PROPELLER_THRUST_SCALE": best["PROPELLER_THRUST_SCALE"],
-        "PROPELLER_ADVANCE_SCALE": best["PROPELLER_ADVANCE_SCALE"],
         "RUDDER_FORCE_SCALE": 1.0,
-        "RUDDER_YAW_SCALE": 1.0,
-        "LINEAR_YAW_DAMP": 0.0,
         "BOW_THRUSTER_SCALE": 1.0,
         "ROLL_DAMP_SCALE": 1.0,
         "ROLL_RESTORE_SCALE": 1.0,
     }
-    best_sim = run_open_loop(rpm=best["rpm"], rudder_deg=0.0, duration_s=DURATION_S, dt=DT, params=best_params)
+    best_sim = run_open_loop(
+        module_name=MODULE_NAME,
+        rpm=best["rpm"],
+        rudder_deg=0.0,
+        duration_s=DURATION_S,
+        dt=DT,
+        params=best_params,
+    )
     best_metrics = extract_motion_metrics(best_sim)
     best_comparison = {
-        "motion": compare_metrics(
-            best_metrics,
-            real_motion["straight_metrics"],
-            WEIGHTS.keys(),
-        )
+        "motion": compare_metrics(best_metrics, real_motion["straight_metrics"], WEIGHTS.keys())
     }
 
     with (OUT_DIR / "best_4dof_motion_config.json").open("w", encoding="utf-8") as f:
-        json.dump({
-            "rpm": best["rpm"],
-            **best_params,
-            "score_total": best["score_total"],
-        }, f, indent=2)
+        json.dump({"rpm": best["rpm"], **best_params, "score_total": best["score_total"]}, f, indent=2)
     with (OUT_DIR / "best_4dof_motion_metrics.json").open("w", encoding="utf-8") as f:
         json.dump({"motion_metrics": best_metrics}, f, indent=2)
     with (OUT_DIR / "best_4dof_motion_comparison.json").open("w", encoding="utf-8") as f:

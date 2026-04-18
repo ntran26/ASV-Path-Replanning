@@ -1,14 +1,15 @@
-"""Stage-1 sweep for the faithful 4DOF Bluefin model.
+"""Narrow motion refinement sweep for the faithful 4DOF Bluefin model.
 
-Focus: straight-line / surge behavior.
+Purpose:
+- refine around the current best faithful-port motion region
+- keep only active parameters from the faithful MATLAB adapter
+
 Run with no arguments:
-
-    python sweep_bluefin_4dof_motion.py
+    python sweep_bluefin_4dof_motion_refine.py
 """
 
 from __future__ import annotations
 
-import importlib
 import itertools
 import json
 from pathlib import Path
@@ -23,12 +24,13 @@ from bluefin_4dof_utils import (
     safe_rel_error,
 )
 
-OUT_DIR = ROOT / "bluefin_4dof_motion_sweep"
+OUT_DIR = ROOT / "bluefin_4dof_motion_sweep_refine"
 
-RPM_GRID = [12.0, 15.0, 18.0, 21.0]
-RPM_INPUT_TO_SOLVER_RPM_GRID = [50.0, 66.6666666667, 80.0, 90.0]
-PROPELLER_THRUST_SCALE_GRID = [0.8, 1.0, 1.2, 1.5]
-PROPELLER_ADVANCE_SCALE_GRID = [0.8, 1.0, 1.2, 1.4]
+# Narrow refinement around the current best faithful motion fit:
+# rpm=15, RPM_INPUT_TO_SOLVER_RPM=85, PROPELLER_THRUST_SCALE=1.7
+RPM_GRID = [15.0, 16.0]
+RPM_INPUT_TO_SOLVER_RPM_GRID = [80.0, 85.0, 90.0]
+PROPELLER_THRUST_SCALE_GRID = [1.7, 1.8, 1.9, 2.0]
 
 DT = 0.1
 DURATION_S = 40.0
@@ -55,20 +57,16 @@ def main() -> None:
     real_motion, _ = load_default_real_benchmarks()
     rows: List[Dict[str, Any]] = []
 
-    for rpm, rpm_scale, prop_scale, advance_scale in itertools.product(
+    for rpm, rpm_scale, prop_scale in itertools.product(
         RPM_GRID,
         RPM_INPUT_TO_SOLVER_RPM_GRID,
         PROPELLER_THRUST_SCALE_GRID,
-        PROPELLER_ADVANCE_SCALE_GRID,
     ):
         params = {
             "RPM_INPUT_TO_SOLVER_RPM": rpm_scale,
             "PROPELLER_THRUST_SCALE": prop_scale,
-            "PROPELLER_ADVANCE_SCALE": advance_scale,
-            # faithful defaults for all other scales
+            # faithful defaults for all other active scales
             "RUDDER_FORCE_SCALE": 1.0,
-            "RUDDER_YAW_SCALE": 1.0,
-            "LINEAR_YAW_DAMP": 0.0,
             "BOW_THRUSTER_SCALE": 1.0,
             "ROLL_DAMP_SCALE": 1.0,
             "ROLL_RESTORE_SCALE": 1.0,
@@ -80,7 +78,6 @@ def main() -> None:
             "rpm": rpm,
             "RPM_INPUT_TO_SOLVER_RPM": rpm_scale,
             "PROPELLER_THRUST_SCALE": prop_scale,
-            "PROPELLER_ADVANCE_SCALE": advance_scale,
             "score_total": score,
             **metrics,
         }
@@ -91,10 +88,7 @@ def main() -> None:
     best_params = {
         "RPM_INPUT_TO_SOLVER_RPM": best["RPM_INPUT_TO_SOLVER_RPM"],
         "PROPELLER_THRUST_SCALE": best["PROPELLER_THRUST_SCALE"],
-        "PROPELLER_ADVANCE_SCALE": best["PROPELLER_ADVANCE_SCALE"],
         "RUDDER_FORCE_SCALE": 1.0,
-        "RUDDER_YAW_SCALE": 1.0,
-        "LINEAR_YAW_DAMP": 0.0,
         "BOW_THRUSTER_SCALE": 1.0,
         "ROLL_DAMP_SCALE": 1.0,
         "ROLL_RESTORE_SCALE": 1.0,
@@ -122,7 +116,7 @@ def main() -> None:
     with (OUT_DIR / "stage1_4dof_motion_top20.json").open("w", encoding="utf-8") as f:
         json.dump({"rows": rows[:20]}, f, indent=2)
 
-    print("Saved motion sweep outputs to", OUT_DIR)
+    print("Saved motion refinement outputs to", OUT_DIR)
 
 
 if __name__ == "__main__":

@@ -1,12 +1,12 @@
-"""Stage-2 turning sweep for the faithful 4DOF Bluefin model.
+"""Stage-2 turn sweep for the *faithful* 4DOF Bluefin model.
 
-Focus: turning-circle behavior. If a motion sweep result exists, the best motion
-settings are loaded automatically and kept fixed while turning-related
-parameters are varied.
+This version only sweeps parameters that actually exist in the faithful
+`ship_model_bluefin_4dof.py` port. It automatically inherits the best motion
+result from `bluefin_4dof_motion_sweep_faithful/` if present.
 
 Run with no arguments:
 
-    python sweep_bluefin_4dof_turn.py
+    python sweep_bluefin_4dof_turn_faithful.py
 """
 
 from __future__ import annotations
@@ -25,16 +25,16 @@ from bluefin_4dof_utils import (
     safe_rel_error,
 )
 
-OUT_DIR = ROOT / "bluefin_4dof_turn_sweep"
-MOTION_SWEEP_DIR = ROOT / "bluefin_4dof_motion_sweep"
+OUT_DIR = ROOT / "bluefin_4dof_turn_sweep_faithful"
+MOTION_SWEEP_DIR = ROOT / "bluefin_4dof_motion_sweep_faithful"
+MODULE_NAME = "ship_model_bluefin_4dof"
 
-TURN_RPM_GRID = [18.0, 20.0, 22.0, 24.0]
-TURN_RUDDER_DEG_GRID = [25.0, 30.0, 35.0, 40.0]
-RUDDER_FORCE_SCALE_GRID = [0.8, 1.0, 1.2, 1.5]
-RUDDER_YAW_SCALE_GRID = [1.2, 1.5, 1.7, 2.0, 2.4]
-LINEAR_YAW_DAMP_GRID = [0.0, 0.5, 1.0, 1.5, 2.0]
-ROLL_DAMP_SCALE_GRID = [0.8, 1.0, 1.2, 1.5]
-ROLL_RESTORE_SCALE_GRID = [0.8, 1.0, 1.2]
+# Narrowed around the current promising turning region.
+TURN_RPM_GRID = [18.0, 20.0]
+TURN_RUDDER_DEG_GRID = [25.0, 30.0]
+RUDDER_FORCE_SCALE_GRID = [0.6, 0.8, 1.0, 1.2]
+ROLL_DAMP_SCALE_GRID = [1.0, 1.2, 1.4, 1.6]
+ROLL_RESTORE_SCALE_GRID = [1.0, 1.2, 1.4]
 
 DT = 0.1
 DURATION_S = 50.0
@@ -54,12 +54,9 @@ def load_motion_best_params() -> Dict[str, float]:
     path = MOTION_SWEEP_DIR / "best_4dof_motion_config.json"
     if not path.exists():
         return {
-            "RPM_INPUT_TO_SOLVER_RPM": 66.6666666667,
-            "PROPELLER_THRUST_SCALE": 1.0,
-            "PROPELLER_ADVANCE_SCALE": 1.0,
+            "RPM_INPUT_TO_SOLVER_RPM": 90.0,
+            "PROPELLER_THRUST_SCALE": 1.5,
             "RUDDER_FORCE_SCALE": 1.0,
-            "RUDDER_YAW_SCALE": 1.0,
-            "LINEAR_YAW_DAMP": 0.0,
             "BOW_THRUSTER_SCALE": 1.0,
             "ROLL_DAMP_SCALE": 1.0,
             "ROLL_RESTORE_SCALE": 1.0,
@@ -67,12 +64,9 @@ def load_motion_best_params() -> Dict[str, float]:
     with path.open("r", encoding="utf-8") as f:
         data = json.load(f)
     return {
-        "RPM_INPUT_TO_SOLVER_RPM": data.get("RPM_INPUT_TO_SOLVER_RPM", 66.6666666667),
-        "PROPELLER_THRUST_SCALE": data.get("PROPELLER_THRUST_SCALE", 1.0),
-        "PROPELLER_ADVANCE_SCALE": data.get("PROPELLER_ADVANCE_SCALE", 1.0),
+        "RPM_INPUT_TO_SOLVER_RPM": data.get("RPM_INPUT_TO_SOLVER_RPM", 90.0),
+        "PROPELLER_THRUST_SCALE": data.get("PROPELLER_THRUST_SCALE", 1.5),
         "RUDDER_FORCE_SCALE": 1.0,
-        "RUDDER_YAW_SCALE": 1.0,
-        "LINEAR_YAW_DAMP": 0.0,
         "BOW_THRUSTER_SCALE": 1.0,
         "ROLL_DAMP_SCALE": 1.0,
         "ROLL_RESTORE_SCALE": 1.0,
@@ -92,24 +86,21 @@ def main() -> None:
     base_params = load_motion_best_params()
     rows: List[Dict[str, Any]] = []
 
-    for rpm, rud_deg, rud_scale, yaw_scale, yaw_damp, roll_damp, roll_restore in itertools.product(
+    for rpm, rud_deg, rud_scale, roll_damp, roll_restore in itertools.product(
         TURN_RPM_GRID,
         TURN_RUDDER_DEG_GRID,
         RUDDER_FORCE_SCALE_GRID,
-        RUDDER_YAW_SCALE_GRID,
-        LINEAR_YAW_DAMP_GRID,
         ROLL_DAMP_SCALE_GRID,
         ROLL_RESTORE_SCALE_GRID,
     ):
         params = {
             **base_params,
             "RUDDER_FORCE_SCALE": rud_scale,
-            "RUDDER_YAW_SCALE": yaw_scale,
-            "LINEAR_YAW_DAMP": yaw_damp,
             "ROLL_DAMP_SCALE": roll_damp,
             "ROLL_RESTORE_SCALE": roll_restore,
         }
         sim = run_open_loop(
+            module_name=MODULE_NAME,
             rpm=rpm,
             rudder_deg=rud_deg,
             duration_s=DURATION_S,
@@ -133,15 +124,13 @@ def main() -> None:
     best_params = {
         "RPM_INPUT_TO_SOLVER_RPM": best["RPM_INPUT_TO_SOLVER_RPM"],
         "PROPELLER_THRUST_SCALE": best["PROPELLER_THRUST_SCALE"],
-        "PROPELLER_ADVANCE_SCALE": best["PROPELLER_ADVANCE_SCALE"],
         "RUDDER_FORCE_SCALE": best["RUDDER_FORCE_SCALE"],
-        "RUDDER_YAW_SCALE": best["RUDDER_YAW_SCALE"],
-        "LINEAR_YAW_DAMP": best["LINEAR_YAW_DAMP"],
         "BOW_THRUSTER_SCALE": best["BOW_THRUSTER_SCALE"],
         "ROLL_DAMP_SCALE": best["ROLL_DAMP_SCALE"],
         "ROLL_RESTORE_SCALE": best["ROLL_RESTORE_SCALE"],
     }
     best_sim = run_open_loop(
+        module_name=MODULE_NAME,
         rpm=best["turn_rpm"],
         rudder_deg=best["turn_rudder_deg"],
         duration_s=DURATION_S,
@@ -151,11 +140,7 @@ def main() -> None:
     )
     best_metrics = extract_turn_metrics(best_sim)
     best_comparison = {
-        "turn": compare_metrics(
-            best_metrics,
-            real_turn["turn_metrics"],
-            WEIGHTS.keys(),
-        )
+        "turn": compare_metrics(best_metrics, real_turn["turn_metrics"], WEIGHTS.keys())
     }
 
     with (OUT_DIR / "best_4dof_turn_config.json").open("w", encoding="utf-8") as f:
