@@ -123,7 +123,7 @@ K_THRUST_DEV = 0.025
 # - "asymmetric": left pool edge visible, right pool edge invisible, far right wall visible
 # - "both": both true pool borders visible
 # - "mixed": randomize across the three cases above
-OBS_BORDER_MODE = "none"
+OBS_BORDER_MODE = "both"
 OBS_BORDER_P_NONE = 0.10
 OBS_BORDER_P_ASYMMETRIC = 0.60
 OBS_BORDER_P_BOTH = 0.30

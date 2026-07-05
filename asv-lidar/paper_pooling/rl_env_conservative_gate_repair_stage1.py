@@ -123,7 +123,7 @@ K_THRUST_DEV = 0.025
 # - "asymmetric": left pool edge visible, right pool edge invisible, far right wall visible
 # - "both": both true pool borders visible
 # - "mixed": randomize across the three cases above
-OBS_BORDER_MODE = "none"
+OBS_BORDER_MODE = "both"
 OBS_BORDER_P_NONE = 0.10
 OBS_BORDER_P_ASYMMETRIC = 0.60
 OBS_BORDER_P_BOTH = 0.30
@@ -147,15 +147,18 @@ TRAIN_OBS_COUNTS = [0, 1, 2, 3, 4]
 # Compared with the previous policy's path-protection curriculum, this gives
 # more weight to 2-obstacle gate/pass-through layouts without making the whole
 # run gate-only. Keep this moderate to avoid destroying the already-good policy.
-TRAIN_OBS_PROBS = [0.15, 0.15, 0.45, 0.15, 0.10]
+TRAIN_OBS_PROBS = [0.20, 0.25, 0.30, 0.15, 0.10]
 
-# Targeted side-choice repair distribution.
-# The previous conservative run did not solve the hand-made failure case. This
-# branch deliberately oversamples target-side/gate layouts, but keeps enough
-# normal cases to reduce catastrophic forgetting. Train only short increments
-# from the protected 1M/94% policy and evaluate before continuing.
-TRAIN_SCENARIO_MODES = ["normal", "target_side", "field_repair", "gate", "offpath"]
-TRAIN_SCENARIO_PROBS = [0.40, 0.35, 0.15, 0.05, 0.05]
+# Scenario-mode mixture for random training episodes only.
+# normal       : old near-path obstacle generator
+# gate         : two obstacles forming a passable corridor/gate
+# field_repair : perturbations of the hand-made failure pattern
+# offpath      : distractor obstacles away from the path
+#
+# The mix is deliberately conservative. The previous aggressive gate-repair run
+# changed too much and degraded the normal evaluation suite.
+TRAIN_SCENARIO_MODES = ["normal", "gate", "field_repair", "offpath"]
+TRAIN_SCENARIO_PROBS = [0.65, 0.20, 0.10, 0.05]
 
 # Gate generation parameters. Gap is measured between obstacle inner faces.
 GATE_GAP_RANGE = (1.35, 2.25)
@@ -171,26 +174,6 @@ FIELD_REPAIR_PATH_FRACS = (0.43, 0.66, 0.66)
 FIELD_REPAIR_LATERALS = (0.0, +1.95, -1.95)
 FIELD_REPAIR_FRAC_JITTER = 0.035
 FIELD_REPAIR_LAT_JITTER = 0.25
-
-# Target-side generator: creates layouts where the clearer/path-recovery side is
-# deliberately passable.  This directly targets the failure mode where the actor
-# committed to the left/wide side although the right/path-side corridor was open.
-TARGET_SIDE_PATH_FRAC_RANGE = (0.38, 0.68)
-TARGET_SIDE_CORRIDOR_OFFSET_RANGE = (0.65, 1.05)
-TARGET_SIDE_BLOCKED_OFFSET_RANGE = (1.40, 2.30)
-TARGET_SIDE_ALONG_JITTER = 0.45
-TARGET_SIDE_LATERAL_JITTER = 0.20
-TARGET_SIDE_RIGHT_PROB = 0.50   # mirror the layout so repair is not one-sided
-
-# Very small reward additions for the targeted repair. These do not change the
-# observation/action space, so the 1M checkpoint remains load-compatible.  They
-# encourage recovery toward the path and discourage obviously wrong-side rudder
-# only when path-recovery direction and side-clearance agree.
-K_CTE_RECOVERY = 0.35
-K_WRONG_SIDE_ACTION = 0.12
-WRONG_SIDE_CTE_MIN = 0.25
-WRONG_SIDE_DIFF_MIN = 1.00
-WRONG_SIDE_FRONT_MIN = 1.20
 
 # Off-path distractors teach the policy that not every visible obstacle should
 # trigger a large bypass away from the path.
@@ -677,82 +660,6 @@ class ASVLidarEnv(gym.Env):
         obstacles.append(obs)
         return True
 
-    def _generate_target_side_obstacles(self, num_obs: int) -> List[List[Tuple[float, float]]]:
-        """Generate the specific side-choice repair family.
-
-        The layout leaves one path-side corridor intentionally usable and places
-        one or more obstacles on the opposite/wide side.  The side is mirrored
-        randomly.  The aim is to teach the actor that if the path-recovery side
-        is also clearer, it should not commit to the opposite side.
-        """
-        num_obs = int(max(0, num_obs))
-        if num_obs <= 0:
-            return []
-        if num_obs == 1:
-            # For one obstacle, use a slightly off-centre near-path obstacle so
-            # the policy must choose the clearer path-side rather than always
-            # making a large bypass.
-            obstacles: List[List[Tuple[float, float]]] = []
-            for _ in range(80):
-                frac = float(np.random.uniform(*TARGET_SIDE_PATH_FRAC_RANGE))
-                center, tangent, normal_left, _ = self._path_frame_at_frac(frac)
-                side_sign = -1.0 if np.random.rand() < TARGET_SIDE_RIGHT_PROB else +1.0
-                lateral = side_sign * float(np.random.uniform(0.35, 0.75))
-                along = float(np.random.uniform(-TARGET_SIDE_ALONG_JITTER, TARGET_SIDE_ALONG_JITTER))
-                p = center + along * tangent + lateral * normal_left
-                obs = self._make_box(float(p[0]), float(p[1]), float(np.random.uniform(0.85, 1.05) * OBSTACLE_SIZE))
-                if self._append_if_valid(obstacles, obs, pad=0.20):
-                    return obstacles
-            return self._generate_normal_obstacles(num_obs)
-
-        obstacles: List[List[Tuple[float, float]]] = []
-
-        # Pick which side is the intended open/recovery side. For a vertical
-        # path, normal_left is approximately negative x.  open_sign=-1 leaves a
-        # right-side corridor; open_sign=+1 mirrors it.
-        open_sign = -1.0 if np.random.rand() < TARGET_SIDE_RIGHT_PROB else +1.0
-        blocked_sign = -open_sign
-
-        # A lower near-path obstacle nudges the vessel but should still leave a
-        # passable corridor on open_sign side.  Upper obstacles on the opposite
-        # side create the tempting/wrong wide bypass.
-        frac0 = float(np.random.uniform(*TARGET_SIDE_PATH_FRAC_RANGE))
-        center0, tangent0, normal0, _ = self._path_frame_at_frac(frac0)
-
-        candidates = []
-        # Near-path / slightly blocking obstacle.
-        lateral0 = blocked_sign * float(np.random.uniform(0.05, 0.35))
-        p0 = center0 + float(np.random.uniform(-0.25, 0.25)) * tangent0 + lateral0 * normal0
-        candidates.append((p0, float(np.random.uniform(0.85, 1.05) * OBSTACLE_SIZE)))
-
-        # Two farther side obstacles, one on blocked side and one near centre but
-        # shifted so the open side remains passable.
-        for frac_shift, lat_range, sign in [
-            (0.12, TARGET_SIDE_BLOCKED_OFFSET_RANGE, blocked_sign),
-            (0.17, TARGET_SIDE_CORRIDOR_OFFSET_RANGE, open_sign),
-        ]:
-            frac = float(np.clip(frac0 + frac_shift + np.random.uniform(-0.035, 0.035), 0.28, 0.78))
-            center, tangent, normal_left, _ = self._path_frame_at_frac(frac)
-            lateral = sign * float(np.random.uniform(*lat_range))
-            lateral += float(np.random.uniform(-TARGET_SIDE_LATERAL_JITTER, TARGET_SIDE_LATERAL_JITTER))
-            along = float(np.random.uniform(-TARGET_SIDE_ALONG_JITTER, TARGET_SIDE_ALONG_JITTER))
-            p = center + along * tangent + lateral * normal_left
-            candidates.append((p, float(np.random.uniform(0.85, 1.05) * OBSTACLE_SIZE)))
-
-        for p, size in candidates[:min(num_obs, len(candidates))]:
-            obs = self._make_box(float(p[0]), float(p[1]), size)
-            self._append_if_valid(obstacles, obs, pad=0.20)
-
-        # Add extra obstacles as off-path distractors, not new centre blockers.
-        tries = 0
-        while len(obstacles) < num_obs and tries < 200:
-            tries += 1
-            candidate = self._generate_offpath_obstacle()
-            if candidate:
-                self._append_if_valid(obstacles, candidate[0], pad=0.25)
-
-        return obstacles[:num_obs] if len(obstacles) >= num_obs else self._generate_gate_obstacles(num_obs)
-
     def _generate_gate_obstacles(self, num_obs: int) -> List[List[Tuple[float, float]]]:
         """Generate a pass-through gate/corridor layout.
 
@@ -900,8 +807,6 @@ class ASVLidarEnv(gym.Env):
         mode = str(np.random.choice(TRAIN_SCENARIO_MODES, p=probs))
         self.scenario_mode_used = mode
 
-        if mode == "target_side":
-            return self._generate_target_side_obstacles(num_obs)
         if mode == "gate":
             return self._generate_gate_obstacles(num_obs)
         if mode == "field_repair":
@@ -1112,7 +1017,6 @@ class ASVLidarEnv(gym.Env):
         self.rpm = rpm
 
         d_prev = float(self.distance_to_goal)
-        ye_prev = abs(float(self.cross_track_error))
         x_prev = float(self.asv_x)
         y_prev = float(self.asv_y)
 
@@ -1201,24 +1105,6 @@ class ASVLidarEnv(gym.Env):
         # stay near cruise RPM
         r_thrust = -float(K_THRUST_DEV * abs(rpm - CRUISE_RPM) / max(RPM_DELTA, 1e-6))
 
-        # Targeted repair terms.  r_cte_recovery rewards reducing absolute CTE
-        # after avoidance. r_wrong_side penalizes only very clear contradictions:
-        # the path-recovery side and side-clearance both favour one direction,
-        # but the action commands the opposite direction.
-        r_cte_recovery = float(K_CTE_RECOVERY * (ye_prev - ye))
-        r_wrong_side = 0.0
-        side_diff = float(self.right_clearance - self.left_clearance)
-        if self.front_clearance > WRONG_SIDE_FRONT_MIN:
-            right_favoured = (self.cross_track_error > WRONG_SIDE_CTE_MIN) and (side_diff > WRONG_SIDE_DIFF_MIN)
-            left_favoured = (self.cross_track_error < -WRONG_SIDE_CTE_MIN) and (side_diff < -WRONG_SIDE_DIFF_MIN)
-            # In this simulation sign convention, negative action/rudder tends
-            # to turn left and positive tends to turn right.  Keep the penalty
-            # small and active only when the evidence is strong.
-            if right_favoured and rudder_cmd < 0.0:
-                r_wrong_side = -float(K_WRONG_SIDE_ACTION * min(abs(rudder_cmd), 1.0))
-            elif left_favoured and rudder_cmd > 0.0:
-                r_wrong_side = -float(K_WRONG_SIDE_ACTION * min(abs(rudder_cmd), 1.0))
-
         if collided:
             reward = float(R_COLLISION)
         else:
@@ -1231,8 +1117,6 @@ class ASVLidarEnv(gym.Env):
                 + r_progress
                 + r_slow
                 + r_thrust
-                + r_cte_recovery
-                + r_wrong_side
             )
             if reached_goal:
                 reward += R_GOAL
